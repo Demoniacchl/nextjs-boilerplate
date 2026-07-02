@@ -289,6 +289,14 @@ export default function Home() {
     }
   };
 
+  // Abrir modal de detalle
+  const handleOpenDetail = (task: Task) => {
+    setSelectedTask(task);
+    setAttachmentName('');
+    setAttachmentUrl('');
+    setQuestionText('');
+  };
+
   // 2. Transiciones Rápidas del Flujo Automatizado
   const handleTransition = async (task: Task, targetStatus: 'todo' | 'in_progress' | 'review' | 'done', newAssigneeId?: string | null) => {
     if (!session) return;
