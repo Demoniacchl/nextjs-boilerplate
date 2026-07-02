@@ -122,7 +122,8 @@ export default function Home() {
   // --- EFECTOS DE AUTENTICACIÓN ---
   useEffect(() => {
     // Obtener sesión inicial
-    supabase.auth.getSession().then(({ data: { session } }) => {
+    supabase.auth.getSession().then((result: any) => {
+      const session = result?.data?.session;
       setSession(session);
       if (session) {
         fetchUserProfile(session.user.id);
@@ -132,7 +133,7 @@ export default function Home() {
     });
 
     // Escuchar cambios de autenticación
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event: any, session: any) => {
       setSession(session);
       if (session) {
         fetchUserProfile(session.user.id);
@@ -292,7 +293,7 @@ export default function Home() {
     setTasks((prev: Task[]) => prev.map((t: Task) => {
       if (t.id === task.id) {
         const assignedProfile = newAssigneeId 
-          ? profiles.find(p => p.id === newAssigneeId) 
+          ? profiles.find((p: Profile) => p.id === newAssigneeId) 
           : newAssigneeId === null ? undefined : t.assigned_profile;
         
         return {
@@ -1034,7 +1035,7 @@ export default function Home() {
                   className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3.5 py-2 text-sm text-slate-200 focus:outline-none focus:border-indigo-500 transition-colors"
                 >
                   <option value="">Sin Asignar (Disponible)</option>
-                  {profiles.map((p) => (
+                  {profiles.map((p: Profile) => (
                     <option key={p.id} value={p.id}>{p.name} ({p.role})</option>
                   ))}
                 </select>
@@ -1102,7 +1103,7 @@ export default function Home() {
                       className="w-full bg-slate-950 border border-slate-850 rounded-lg px-3 py-2 text-xs text-slate-200 focus:outline-none focus:border-indigo-500"
                     >
                       <option value="">Sin Asignar (Disponible)</option>
-                      {profiles.map((p) => (
+                      {profiles.map((p: Profile) => (
                         <option key={p.id} value={p.id}>{p.name} ({p.role})</option>
                       ))}
                     </select>
