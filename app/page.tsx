@@ -155,11 +155,32 @@ export default function Home() {
         .eq('id', userId)
         .single();
       
-      if (error) throw error;
-      setCurrentUserProfile(data);
-    } catch (err) {
+      if (error) {
+        // Si el perfil no existe (ej. usuario creado antes del trigger o manualmente en consola)
+        if (error.code === 'PGRST116') {
+          const { data: { user } } = await supabase.auth.getUser();
+          const email = user?.email || 'Usuario';
+          const name = user?.user_metadata?.name || email.split('@')[0];
+          const role = user?.user_metadata?.role || 'colaborador';
+          
+          const { data: newProfile, error: insertError } = await supabase
+            .from('profiles')
+            .insert([{ id: userId, name, role }])
+            .select()
+            .single();
+            
+          if (insertError) throw insertError;
+          setCurrentUserProfile(newProfile);
+          showToast('Perfil inicializado correctamente');
+        } else {
+          throw error;
+        }
+      } else {
+        setCurrentUserProfile(data);
+      }
+    } catch (err: any) {
       console.error('Error al obtener perfil:', err);
-      showToast('Error al cargar perfil de usuario', 'error');
+      showToast(`Error de perfil: ${err.message || 'Desconocido'}`, 'error');
     } finally {
       setAuthLoading(false);
     }
@@ -553,6 +574,18 @@ export default function Home() {
   if (!session || !currentUserProfile) {
     return (
       <div className="min-h-screen bg-gradient-to-br from-slate-900 via-slate-950 to-zinc-950 text-slate-100 font-sans flex flex-col justify-center items-center p-4 antialiased">
+        {/* Toast Feedback en Login */}
+        {toast && (
+          <div className={`fixed bottom-5 right-5 z-55 flex items-center gap-3 px-5 py-3.5 rounded-xl shadow-2xl border ${
+            toast.type === 'error' 
+              ? 'bg-rose-500/10 border-rose-500/20 text-rose-200' 
+              : 'bg-emerald-500/10 border-emerald-500/20 text-emerald-200'
+          }`}>
+            {toast.type === 'error' ? <AlertCircle className="w-5 h-5 text-rose-400" /> : <CheckCircle2 className="w-5 h-5 text-emerald-400" />}
+            <span className="text-sm font-medium">{toast.message}</span>
+          </div>
+        )}
+
         <div className="w-full max-w-md bg-slate-900/60 border border-slate-800 backdrop-blur-md rounded-2xl p-8 shadow-2xl flex flex-col gap-6 relative overflow-hidden">
           
           {/* Decoración superior */}
