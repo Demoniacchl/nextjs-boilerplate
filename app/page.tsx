@@ -13,7 +13,6 @@ import {
   HelpCircle,
   Check,
   RefreshCw,
-  FolderOpen,
   Image as ImageIcon,
   Send,
   LogOut,
@@ -23,7 +22,14 @@ import {
   Shield,
   ArrowRight,
   ChevronRight,
-  ExternalLink
+  ExternalLink,
+  Inbox,
+  Code2,
+  Eye,
+  Trophy,
+  History,
+  Paperclip,
+  Info
 } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 
@@ -50,9 +56,6 @@ interface Question {
   resolved: boolean;
   created_at: string;
   author_profile?: Profile;
-  response_text?: string;
-  responder_id?: string;
-  responder_profile?: Profile;
 }
 
 interface Task {
@@ -70,12 +73,69 @@ interface Task {
   questions?: Question[];
 }
 
+// Ficha visual de cada etapa del pipeline: además del color, cada columna
+// lleva su propio ícono y micro-copy para que el tablero se lea como un
+// flujo de trabajo (cola -> en desarrollo -> en revisión -> aprobado)
+// y no como cuatro cajas grises idénticas.
 const COLUMNS = [
-  { id: 'todo', title: 'Por Hacer', color: 'bg-slate-900/30 border-slate-800/80' },
-  { id: 'in_progress', title: 'En Progreso', color: 'bg-blue-950/15 border-blue-900/30' },
-  { id: 'review', title: 'Bajo Revisión', color: 'bg-amber-950/15 border-amber-900/30' },
-  { id: 'done', title: 'Completado', color: 'bg-emerald-950/15 border-emerald-900/30' }
+  { 
+    id: 'todo', title: 'Por Hacer', subtitle: 'Cola sin asignar', icon: Inbox,
+    wrap: 'bg-slate-900/30 border-slate-800/80',
+    top: 'from-slate-500 to-slate-600',
+    text: 'text-slate-300', dot: 'bg-slate-400', badge: 'bg-slate-800 text-slate-300',
+    emptyBorder: 'border-slate-700/70 hover:border-slate-500', emptyIcon: 'text-slate-600 group-hover:text-slate-400',
+    emptyCta: 'text-slate-500 group-hover:text-slate-300', emptyMsg: 'Sin tickets en cola. Crea el primero.'
+  },
+  { 
+    id: 'in_progress', title: 'En Progreso', subtitle: 'En desarrollo activo', icon: Code2,
+    wrap: 'bg-violet-950/10 border-violet-900/40',
+    top: 'from-violet-500 to-indigo-500',
+    text: 'text-violet-300', dot: 'bg-violet-400', badge: 'bg-violet-500/15 text-violet-300',
+    emptyBorder: 'border-violet-900/50 hover:border-violet-600/60', emptyIcon: 'text-violet-800 group-hover:text-violet-400',
+    emptyCta: 'text-violet-700 group-hover:text-violet-300', emptyMsg: 'Nada en desarrollo por ahora.'
+  },
+  { 
+    id: 'review', title: 'Bajo Revisión', subtitle: 'Esperando al revisor', icon: Eye,
+    wrap: 'bg-amber-950/10 border-amber-900/40',
+    top: 'from-amber-500 to-orange-500',
+    text: 'text-amber-300', dot: 'bg-amber-400', badge: 'bg-amber-500/15 text-amber-300',
+    emptyBorder: 'border-amber-900/50 hover:border-amber-600/60', emptyIcon: 'text-amber-800 group-hover:text-amber-400',
+    emptyCta: 'text-amber-700 group-hover:text-amber-300', emptyMsg: 'Nada esperando revisión.'
+  },
+  { 
+    id: 'done', title: 'Completado', subtitle: 'Aprobado y cerrado', icon: Trophy,
+    wrap: 'bg-emerald-950/10 border-emerald-900/40',
+    top: 'from-emerald-500 to-teal-500',
+    text: 'text-emerald-300', dot: 'bg-emerald-400', badge: 'bg-emerald-500/15 text-emerald-300',
+    emptyBorder: 'border-emerald-900/50 hover:border-emerald-600/60', emptyIcon: 'text-emerald-800 group-hover:text-emerald-400',
+    emptyCta: 'text-emerald-700 group-hover:text-emerald-300', emptyMsg: 'Todavía no hay entregas aquí.'
+  }
 ] as const;
+
+// Estilo por prioridad, reutilizado en tarjeta, modal y formulario
+const PRIORITY_STYLE: Record<string, { label: string; text: string; bg: string; border: string; dot: string; stripe: string }> = {
+  low: { label: 'Baja', text: 'text-sky-400', bg: 'bg-sky-500/10', border: 'border-sky-500/25', dot: 'bg-sky-400', stripe: 'border-l-sky-500' },
+  medium: { label: 'Media', text: 'text-amber-400', bg: 'bg-amber-500/10', border: 'border-amber-500/25', dot: 'bg-amber-400', stripe: 'border-l-amber-500' },
+  high: { label: 'Alta', text: 'text-rose-400', bg: 'bg-rose-500/10', border: 'border-rose-500/25', dot: 'bg-rose-400', stripe: 'border-l-rose-500' },
+};
+
+// Código corto de ticket, tipo "TCK-4F2A", para reforzar la identidad de
+// ticketera de desarrollo (no un simple to-do)
+const ticketCode = (id: string) => `TCK-${id.replace(/-/g, '').slice(0, 4).toUpperCase()}`;
+
+// Fecha relativa breve para el pie de la tarjeta y el historial
+const timeAgo = (iso: string) => {
+  if (!iso) return '';
+  const diffMs = Date.now() - new Date(iso).getTime();
+  const min = Math.floor(diffMs / 60000);
+  if (min < 1) return 'ahora';
+  if (min < 60) return `hace ${min} min`;
+  const hr = Math.floor(min / 60);
+  if (hr < 24) return `hace ${hr} h`;
+  const day = Math.floor(hr / 24);
+  if (day < 30) return `hace ${day} d`;
+  return new Date(iso).toLocaleDateString();
+};
 
 export default function Home() {
   // Autenticación & Perfil
@@ -100,6 +160,7 @@ export default function Home() {
   const [selectedTask, setSelectedTask] = useState<Task | null>(null);
   const [isCreateOpen, setIsCreateOpen] = useState(false);
   const [createColumn, setCreateColumn] = useState<'todo' | 'in_progress' | 'review' | 'done'>('todo');
+  const [modalTab, setModalTab] = useState<'detalles' | 'adjuntos' | 'consultas' | 'actividad'>('detalles');
 
   // Form Tarea
   const [newTitle, setNewTitle] = useState('');
@@ -114,7 +175,6 @@ export default function Home() {
   
   // Form Pregunta
   const [questionText, setQuestionText] = useState('');
-  const [answerTexts, setAnswerTexts] = useState<Record<string, string>>({});
 
   // Toast
   const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null);
@@ -122,6 +182,22 @@ export default function Home() {
   const showToast = (message: string, type: 'success' | 'error' = 'success') => {
     setToast({ message, type });
     setTimeout(() => setToast(null), 3000);
+  };
+
+  // Abre el modal de creación pre-cargado con la columna sobre la que se hizo clic
+  const handleOpenCreate = (column: 'todo' | 'in_progress' | 'review' | 'done') => {
+    setCreateColumn(column);
+    setNewTitle('');
+    setNewDesc('');
+    setNewPriority('medium');
+    setNewAssignedTo('');
+    setIsCreateOpen(true);
+  };
+
+  // Abre el modal de detalle de una tarea, siempre arrancando en la pestaña "Detalles"
+  const handleOpenDetail = (task: Task) => {
+    setSelectedTask(task);
+    setModalTab('detalles');
   };
 
   // --- EFECTOS DE AUTENTICACIÓN ---
@@ -160,32 +236,11 @@ export default function Home() {
         .eq('id', userId)
         .single();
       
-      if (error) {
-        // Si el perfil no existe (ej. usuario creado antes del trigger o manualmente en consola)
-        if (error.code === 'PGRST116') {
-          const { data: { user } } = await supabase.auth.getUser();
-          const email = user?.email || 'Usuario';
-          const name = user?.user_metadata?.name || email.split('@')[0];
-          const role = user?.user_metadata?.role || 'colaborador';
-          
-          const { data: newProfile, error: insertError } = await supabase
-            .from('profiles')
-            .insert([{ id: userId, name, role }])
-            .select()
-            .single();
-            
-          if (insertError) throw insertError;
-          setCurrentUserProfile(newProfile);
-          showToast('Perfil inicializado correctamente');
-        } else {
-          throw error;
-        }
-      } else {
-        setCurrentUserProfile(data);
-      }
-    } catch (err: any) {
+      if (error) throw error;
+      setCurrentUserProfile(data);
+    } catch (err) {
       console.error('Error al obtener perfil:', err);
-      showToast(`Error de perfil: ${err.message || 'Desconocido'}`, 'error');
+      showToast('Error al cargar perfil de usuario', 'error');
     } finally {
       setAuthLoading(false);
     }
@@ -275,16 +330,6 @@ export default function Home() {
 
   // --- ACCIONES KANBAN ---
   
-  // Abrir formulario para crear tarea
-  const handleOpenCreate = (columnId: 'todo' | 'in_progress' | 'review' | 'done') => {
-    setCreateColumn(columnId);
-    setNewTitle('');
-    setNewDesc('');
-    setNewPriority('medium');
-    setNewAssignedTo('');
-    setIsCreateOpen(true);
-  };
-
   // 1. Crear Tarea
   const handleCreateTask = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -313,14 +358,6 @@ export default function Home() {
     } catch (err) {
       showToast('Error al crear tarea', 'error');
     }
-  };
-
-  // Abrir modal de detalle
-  const handleOpenDetail = (task: Task) => {
-    setSelectedTask(task);
-    setAttachmentName('');
-    setSelectedFile(null);
-    setQuestionText('');
   };
 
   // 2. Transiciones Rápidas del Flujo Automatizado
@@ -504,45 +541,6 @@ export default function Home() {
     }
   };
 
-  // 5.b Responder Pregunta (solo para revisores o autorizados)
-  const handleAnswerQuestion = async (qid: string, e: React.FormEvent) => {
-    e.preventDefault();
-    const ansText = answerTexts[qid];
-    if (!ansText || !ansText.trim() || !session || !selectedTask) return;
-
-    try {
-      const res = await fetch(`/api/questions/${qid}`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          response_text: ansText,
-          responder_id: session.user.id,
-          resolved: true // Al responder una duda, se marca como resuelta
-        })
-      });
-
-      if (!res.ok) throw new Error();
-      const updatedQ = await res.json();
-
-      // Encontrar perfil del que responde
-      const currentProfile = profiles.find((p: Profile) => p.id === session.user.id) || currentUserProfile;
-      updatedQ.responder_profile = currentProfile;
-
-      // Actualizar local
-      const updatedQuestions = (selectedTask.questions || []).map((q: Question) => q.id === qid ? { ...q, ...updatedQ } : q);
-      const updatedTask = { ...selectedTask, questions: updatedQuestions };
-
-      setTasks((prev: Task[]) => prev.map((t: Task) => t.id === selectedTask.id ? updatedTask : t));
-      setSelectedTask(updatedTask);
-      
-      // Limpiar input de esta duda
-      setAnswerTexts(prev => ({ ...prev, [qid]: '' }));
-      showToast('Pregunta respondida y resuelta');
-    } catch (err) {
-      showToast('Error al enviar la respuesta', 'error');
-    }
-  };
-
   // 6. Resolver Pregunta
   const handleToggleQuestionResolve = async (question: Question) => {
     if (!selectedTask) return;
@@ -647,18 +645,6 @@ export default function Home() {
   if (!session || !currentUserProfile) {
     return (
       <div className="min-h-screen bg-gradient-to-br from-slate-900 via-slate-950 to-zinc-950 text-slate-100 font-sans flex flex-col justify-center items-center p-4 antialiased">
-        {/* Toast Feedback en Login */}
-        {toast && (
-          <div className={`fixed bottom-5 right-5 z-55 flex items-center gap-3 px-5 py-3.5 rounded-xl shadow-2xl border ${
-            toast.type === 'error' 
-              ? 'bg-rose-500/10 border-rose-500/20 text-rose-200' 
-              : 'bg-emerald-500/10 border-emerald-500/20 text-emerald-200'
-          }`}>
-            {toast.type === 'error' ? <AlertCircle className="w-5 h-5 text-rose-400" /> : <CheckCircle2 className="w-5 h-5 text-emerald-400" />}
-            <span className="text-sm font-medium">{toast.message}</span>
-          </div>
-        )}
-
         <div className="w-full max-w-md bg-slate-900/60 border border-slate-800 backdrop-blur-md rounded-2xl p-8 shadow-2xl flex flex-col gap-6 relative overflow-hidden">
           
           {/* Decoración superior */}
@@ -874,44 +860,61 @@ export default function Home() {
               return (
                 <div 
                   key={column.id} 
-                  className={`flex flex-col rounded-xl border p-4 min-h-[500px] transition-all duration-300 ${column.color}`}
+                  className={`flex flex-col rounded-2xl border overflow-hidden min-h-[560px] transition-all duration-300 ${column.wrap}`}
                   onDragOver={handleDragOver}
                   onDrop={(e) => handleDrop(e, column.id)}
                 >
+                  {/* Riel superior de color: refuerza la posición en el pipeline */}
+                  <div className={`h-1 w-full bg-gradient-to-r ${column.top}`} />
+
                   {/* Column Header */}
-                  <div className="flex items-center justify-between mb-4 pb-2 border-b border-slate-800/40">
-                    <div className="flex items-center gap-2">
-                      <h2 className="font-bold text-sm text-slate-200 tracking-wide uppercase">
-                        {column.title}
-                      </h2>
-                      <span className="text-xs font-bold px-2 py-0.5 rounded-full bg-slate-800 text-slate-400">
-                        {columnTasks.length}
-                      </span>
+                  <div className="flex items-center justify-between px-4 pt-3.5 pb-3 border-b border-white/5">
+                    <div className="flex items-center gap-2.5">
+                      <div className={`w-8 h-8 rounded-lg bg-black/20 flex items-center justify-center ${column.text}`}>
+                        <column.icon className="w-4 h-4" />
+                      </div>
+                      <div>
+                        <div className="flex items-center gap-2">
+                          <h2 className={`font-bold text-[13px] tracking-wide ${column.text}`}>
+                            {column.title}
+                          </h2>
+                          <span className={`text-[10px] font-extrabold px-1.5 py-0.5 rounded-full ${column.badge}`}>
+                            {columnTasks.length}
+                          </span>
+                        </div>
+                        <p className="text-[10px] text-slate-500 font-medium leading-tight">{column.subtitle}</p>
+                      </div>
                     </div>
                     <button 
                       onClick={() => handleOpenCreate(column.id)}
-                      className="p-1 rounded-md hover:bg-slate-800/80 text-slate-400 hover:text-white transition-all focus:outline-none"
+                      className="p-1.5 rounded-lg hover:bg-white/10 text-slate-400 hover:text-white transition-all focus:outline-none"
+                      title="Añadir tarea aquí"
                     >
-                      <Plus className="w-4.5 h-4.5" />
+                      <Plus className="w-4 h-4" />
                     </button>
                   </div>
 
                   {/* Tasks List */}
-                  <div className="flex flex-col gap-3 flex-1 overflow-y-auto max-h-[calc(100vh-280px)] pr-1">
+                  <div className="flex flex-col gap-2.5 flex-1 overflow-y-auto max-h-[calc(100vh-280px)] p-3">
                     {columnTasks.length === 0 ? (
                       <div 
                         onClick={() => handleOpenCreate(column.id)}
-                        className="flex-1 border border-dashed border-slate-800 hover:border-slate-700/80 rounded-xl flex flex-col items-center justify-center p-6 text-center group cursor-pointer transition-all duration-200 bg-slate-900/10 hover:bg-slate-900/20"
+                        className={`flex-1 border border-dashed rounded-xl flex flex-col items-center justify-center p-6 text-center group cursor-pointer transition-all duration-200 ${column.emptyBorder}`}
                       >
-                        <FolderOpen className="w-7 h-7 text-slate-700 group-hover:text-indigo-400/70 mb-2 transition-colors" />
-                        <span className="text-xs font-semibold text-slate-550 group-hover:text-slate-400 transition-colors">
-                          Añadir Tarea
+                        <column.icon className={`w-7 h-7 mb-2 transition-colors ${column.emptyIcon}`} />
+                        <span className={`text-xs font-semibold transition-colors ${column.emptyCta}`}>
+                          {column.emptyMsg}
+                        </span>
+                        <span className="text-[10px] text-slate-600 mt-2 flex items-center gap-1 font-semibold">
+                          <Plus className="w-3 h-3" /> Añadir tarea
                         </span>
                       </div>
                     ) : (
                       columnTasks.map((task) => {
                         const pendingQs = getPendingQuestions(task);
                         const totalQs = (task.questions || []).length;
+                        const pStyle = PRIORITY_STYLE[task.priority] || PRIORITY_STYLE.medium;
+                        const stageIndex = COLUMNS.findIndex(c => c.id === task.status);
                         
                         // Primera imagen adjunta sirve como portada
                         const coverAttachment = task.attachments?.find((att: Attachment) => 
@@ -924,7 +927,7 @@ export default function Home() {
                             draggable
                             onDragStart={(e) => handleDragStart(e, task.id)}
                             onClick={() => handleOpenDetail(task)}
-                            className="bg-[#15233c]/90 border border-[#233857] rounded-xl cursor-grab active:cursor-grabbing hover:border-indigo-500/50 hover:-translate-y-0.5 transition-all duration-300 hover:shadow-xl hover:shadow-indigo-500/5 group relative overflow-hidden flex flex-col"
+                            className={`bg-slate-900 border border-slate-800 border-l-4 ${pStyle.stripe} rounded-xl cursor-grab active:cursor-grabbing hover:border-slate-700 hover:-translate-y-0.5 transition-all duration-200 hover:shadow-xl hover:shadow-black/30 group relative overflow-hidden flex flex-col`}
                           >
                             {/* Portada de Imagen (Trello style) */}
                             {coverAttachment && (
@@ -935,22 +938,22 @@ export default function Home() {
                                   alt={coverAttachment.name}
                                   className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-350"
                                 />
+                                <div className="absolute inset-x-0 bottom-0 h-8 bg-gradient-to-t from-slate-950/80 to-transparent" />
                               </div>
                             )}
 
                             {/* Contenido de la tarjeta */}
-                            <div className="p-4 flex flex-col gap-3">
-                              {/* Fila superior: Prioridad y Eliminar */}
+                            <div className="p-3.5 flex flex-col gap-2.5">
+                              {/* Fila superior: código de ticket, prioridad y eliminar */}
                               <div className="flex items-center justify-between">
-                                <span className={`text-[9px] font-black uppercase tracking-wider px-2 py-0.5 rounded-full border ${
-                                  task.priority === 'high' 
-                                    ? 'bg-rose-500/10 border-rose-500/20 text-rose-400' 
-                                    : task.priority === 'medium'
-                                    ? 'bg-amber-500/10 border-amber-500/20 text-amber-400'
-                                    : 'bg-emerald-500/10 border-emerald-500/20 text-emerald-400'
-                                }`}>
-                                  {task.priority === 'high' ? 'Alta' : task.priority === 'medium' ? 'Media' : 'Baja'}
-                                </span>
+                                <div className="flex items-center gap-1.5">
+                                  <span className="text-[9px] font-mono font-bold text-slate-550 tracking-tight">
+                                    {ticketCode(task.id)}
+                                  </span>
+                                  <span className={`text-[9px] font-black uppercase tracking-wider px-1.5 py-0.5 rounded-full border ${pStyle.bg} ${pStyle.border} ${pStyle.text}`}>
+                                    {pStyle.label}
+                                  </span>
+                                </div>
                                 
                                 <button 
                                   onClick={(e) => {
@@ -966,46 +969,60 @@ export default function Home() {
 
                               {/* Título y Descripción */}
                               <div>
-                                <h3 className="font-semibold text-slate-200 group-hover:text-indigo-300 transition-colors text-sm line-clamp-2">
+                                <h3 className="font-semibold text-slate-100 group-hover:text-white transition-colors text-sm leading-snug line-clamp-2">
                                   {task.title}
                                 </h3>
                                 {task.description && (
-                                  <p className="text-xs text-slate-450 mt-1 line-clamp-2 leading-relaxed">
+                                  <p className="text-[11px] text-slate-450 mt-1 line-clamp-2 leading-relaxed">
                                     {task.description}
                                   </p>
                                 )}
                               </div>
 
+                              {/* Mini riel de etapas: dónde va este ticket dentro del pipeline */}
+                              <div className="flex items-center gap-1" title={`Etapa ${stageIndex + 1} de ${COLUMNS.length}: ${column.title}`}>
+                                {COLUMNS.map((c, i) => (
+                                  <span
+                                    key={c.id}
+                                    className={`h-1 flex-1 rounded-full transition-colors ${i <= stageIndex ? column.dot : 'bg-slate-800'}`}
+                                  />
+                                ))}
+                              </div>
+
                               {/* Asignado & Preguntas en el Footer */}
-                              <div className="flex items-center justify-between mt-1 pt-2.5 border-t border-slate-850/60">
+                              <div className="flex items-center justify-between mt-0.5 pt-2 border-t border-slate-850/60">
                                 
-                                {/* Preguntas Badge */}
-                                <div className="flex items-center gap-1.5">
-                                  {totalQs > 0 ? (
+                                {/* Badges de actividad */}
+                                <div className="flex items-center gap-2">
+                                  {totalQs > 0 && (
                                     <div className={`flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-bold ${
                                       pendingQs > 0 
                                         ? 'bg-amber-500/15 text-amber-400 border border-amber-500/10' 
                                         : 'bg-emerald-500/15 text-emerald-400 border border-emerald-500/10'
                                     }`}>
                                       <MessageSquare className="w-3 h-3" />
-                                      <span>{pendingQs}</span>
+                                      <span>{pendingQs > 0 ? pendingQs : totalQs}</span>
                                     </div>
-                                  ) : (
-                                    <div className="w-1 h-1"></div>
                                   )}
                                   
                                   {task.attachments && task.attachments.length > 0 && (
                                     <div className="flex items-center gap-0.5 text-slate-500" title={`${task.attachments.length} archivos adjuntos`}>
-                                      <ImageIcon className="w-3.5 h-3.5" />
+                                      <Paperclip className="w-3 h-3" />
                                       <span className="text-[10px] font-bold">{task.attachments.length}</span>
                                     </div>
                                   )}
+
+                                  <span className="text-[9px] font-mono text-slate-600">{timeAgo(task.created_at)}</span>
                                 </div>
 
-                                {/* Avatar Asignado */}
+                                {/* Avatar Asignado, con anillo de color según rol */}
                                 {task.assigned_profile ? (
                                   <div 
-                                    className="w-6 h-6 rounded-full bg-indigo-500/20 text-indigo-400 flex items-center justify-center font-extrabold text-[9px] border border-indigo-500/30 shadow-sm"
+                                    className={`w-6 h-6 rounded-full flex items-center justify-center font-extrabold text-[9px] shadow-sm ring-2 ${
+                                      task.assigned_profile.role === 'revisor' || task.assigned_profile.role === 'admin'
+                                        ? 'bg-amber-500/20 text-amber-300 ring-amber-500/40'
+                                        : 'bg-violet-500/20 text-violet-300 ring-violet-500/40'
+                                    }`}
                                     title={`Asignada a: ${task.assigned_profile.name} (${task.assigned_profile.role})`}
                                   >
                                     {getInitials(task.assigned_profile.name)}
@@ -1018,7 +1035,7 @@ export default function Home() {
                               </div>
 
                               {/* ACCIONES AUTOMÁTICAS EN TARJETA */}
-                              <div className="mt-1 pt-2 border-t border-slate-850/30 flex justify-end gap-1.5">
+                              <div className="flex justify-end gap-1.5">
                                 
                                 {/* COLUMNA: Por Hacer -> Tomar Tarea */}
                                 {task.status === 'todo' && (
@@ -1027,7 +1044,7 @@ export default function Home() {
                                       e.stopPropagation();
                                       handleClaimTask(task);
                                     }}
-                                    className="w-full py-1.5 bg-indigo-600/25 hover:bg-indigo-600/80 text-indigo-300 hover:text-white border border-indigo-500/10 hover:border-indigo-500/40 rounded-lg text-[10px] font-bold transition-all flex items-center justify-center gap-1"
+                                    className="w-full py-1.5 bg-violet-600 hover:bg-violet-500 text-white rounded-lg text-[10px] font-bold transition-all flex items-center justify-center gap-1 shadow-sm shadow-violet-950/40"
                                   >
                                     Tomar Tarea
                                     <ArrowRight className="w-3 h-3" />
@@ -1041,7 +1058,7 @@ export default function Home() {
                                       e.stopPropagation();
                                       handleSendToReview(task);
                                     }}
-                                    className="w-full py-1.5 bg-amber-600/25 hover:bg-amber-600/80 text-amber-300 hover:text-white border border-amber-500/10 hover:border-amber-500/40 rounded-lg text-[10px] font-bold transition-all flex items-center justify-center gap-1"
+                                    className="w-full py-1.5 bg-amber-600 hover:bg-amber-500 text-white rounded-lg text-[10px] font-bold transition-all flex items-center justify-center gap-1 shadow-sm shadow-amber-950/40"
                                   >
                                     Enviar a Revisión
                                     <ArrowRight className="w-3 h-3" />
@@ -1066,7 +1083,7 @@ export default function Home() {
                                         e.stopPropagation();
                                         handleApprove(task);
                                       }}
-                                      className="py-1 bg-emerald-500/10 hover:bg-emerald-500/80 text-emerald-400 hover:text-white border border-emerald-500/10 rounded-md text-[9px] font-bold transition-all flex items-center justify-center gap-0.5"
+                                      className="py-1 bg-emerald-600 hover:bg-emerald-500 text-white rounded-md text-[9px] font-bold transition-all flex items-center justify-center gap-0.5"
                                       title="Aprobar y Completar tarea"
                                     >
                                       Aprobar
@@ -1137,15 +1154,11 @@ export default function Home() {
                       onClick={() => setNewPriority(p)}
                       className={`py-1.5 rounded-lg text-xs font-semibold border transition-all uppercase tracking-wide ${
                         newPriority === p
-                          ? p === 'high' 
-                            ? 'bg-rose-500/10 border-rose-500/40 text-rose-400'
-                            : p === 'medium'
-                            ? 'bg-amber-500/10 border-amber-500/40 text-amber-400'
-                            : 'bg-emerald-500/10 border-emerald-500/40 text-emerald-400'
+                          ? `${PRIORITY_STYLE[p].bg} ${PRIORITY_STYLE[p].border} ${PRIORITY_STYLE[p].text}`
                           : 'bg-slate-950 border-slate-850 hover:bg-slate-850 text-slate-500'
                       }`}
                     >
-                      {p === 'high' ? 'Alta' : p === 'medium' ? 'Media' : 'Baja'}
+                      {PRIORITY_STYLE[p].label}
                     </button>
                   ))}
                 </div>
@@ -1193,23 +1206,61 @@ export default function Home() {
           <div className="bg-slate-900 border border-slate-800 rounded-2xl w-full max-w-2xl shadow-2xl relative z-10 flex flex-col max-h-[90vh]">
             
             {/* Header */}
-            <div className="flex items-center justify-between p-6 pb-4 border-b border-slate-800/80">
-              <div>
-                <span className="text-[10px] font-bold text-slate-500 uppercase tracking-widest block mb-0.5">Módulo de Revisión</span>
-                <h3 className="text-lg font-extrabold text-slate-100 flex items-center gap-2">
-                  <FolderOpen className="w-5 h-5 text-indigo-400" />
-                  {selectedTask.title}
-                </h3>
+            <div className="p-6 pb-0 border-b border-slate-800/80">
+              <div className="flex items-center justify-between pb-4">
+                <div>
+                  <div className="flex items-center gap-2 mb-1">
+                    <span className="text-[10px] font-mono font-bold text-slate-500">{ticketCode(selectedTask.id)}</span>
+                    {(() => {
+                      const col = COLUMNS.find(c => c.id === selectedTask.status)!;
+                      return (
+                        <span className={`text-[9px] font-black uppercase tracking-wider px-1.5 py-0.5 rounded-full flex items-center gap-1 ${col.badge}`}>
+                          <col.icon className="w-2.5 h-2.5" /> {col.title}
+                        </span>
+                      );
+                    })()}
+                  </div>
+                  <h3 className="text-lg font-extrabold text-slate-100 flex items-center gap-2">
+                    {selectedTask.title}
+                  </h3>
+                </div>
+                <button onClick={() => setSelectedTask(null)} className="p-1 rounded-lg hover:bg-slate-800 text-slate-400 hover:text-white transition-all">
+                  <X className="w-5 h-5" />
+                </button>
               </div>
-              <button onClick={() => setSelectedTask(null)} className="p-1 rounded-lg hover:bg-slate-800 text-slate-400 hover:text-white transition-all">
-                <X className="w-5 h-5" />
-              </button>
+
+              {/* Pestañas */}
+              <div className="flex items-center gap-1">
+                {([
+                  { id: 'detalles', label: 'Detalles', icon: Info, count: undefined },
+                  { id: 'adjuntos', label: 'Adjuntos', icon: ImageIcon, count: undefined },
+                  { id: 'consultas', label: 'Consultas', icon: HelpCircle, count: getPendingQuestions(selectedTask) || undefined },
+                  { id: 'actividad', label: 'Actividad', icon: History, count: undefined },
+                ] as { id: 'detalles' | 'adjuntos' | 'consultas' | 'actividad'; label: string; icon: React.ComponentType<{ className?: string }>; count?: number }[]).map((tab) => (
+                  <button
+                    key={tab.id}
+                    onClick={() => setModalTab(tab.id)}
+                    className={`px-3.5 py-2 text-xs font-bold rounded-t-lg flex items-center gap-1.5 border-b-2 transition-all ${
+                      modalTab === tab.id
+                        ? 'text-indigo-300 border-indigo-500 bg-indigo-500/5'
+                        : 'text-slate-500 border-transparent hover:text-slate-300'
+                    }`}
+                  >
+                    <tab.icon className="w-3.5 h-3.5" />
+                    {tab.label}
+                    {!!tab.count && (
+                      <span className="text-[9px] font-black bg-amber-500/20 text-amber-400 rounded-full px-1.5">{tab.count}</span>
+                    )}
+                  </button>
+                ))}
+              </div>
             </div>
 
             {/* Scrollable Content */}
             <div className="p-6 overflow-y-auto flex flex-col gap-6 flex-1">
               
-              {/* Información y Edición */}
+              {/* PESTAÑA: Detalles */}
+              {modalTab === 'detalles' && (
               <div className="grid grid-cols-1 md:grid-cols-2 gap-5 bg-slate-950/40 p-4.5 rounded-xl border border-slate-850/60">
                 <div className="flex flex-col gap-3">
                   <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Descripción de Tarea</span>
@@ -1236,28 +1287,40 @@ export default function Home() {
                   <div className="grid grid-cols-2 gap-3">
                     <div className="flex flex-col gap-1.5">
                       <label className="text-[10px] font-extrabold text-slate-400 uppercase tracking-widest">Prioridad</label>
-                      <span className={`text-center py-1.5 rounded-lg text-xs font-bold border uppercase tracking-wider ${
-                        selectedTask.priority === 'high'
-                          ? 'bg-rose-500/10 border-rose-500/30 text-rose-400'
-                          : selectedTask.priority === 'medium'
-                          ? 'bg-amber-500/10 border-amber-500/30 text-amber-400'
-                          : 'bg-emerald-500/10 border-emerald-500/30 text-emerald-400'
-                      }`}>
-                        {selectedTask.priority === 'high' ? 'Alta' : selectedTask.priority === 'medium' ? 'Media' : 'Baja'}
+                      <span className={`text-center py-1.5 rounded-lg text-xs font-bold border uppercase tracking-wider ${PRIORITY_STYLE[selectedTask.priority].bg} ${PRIORITY_STYLE[selectedTask.priority].border} ${PRIORITY_STYLE[selectedTask.priority].text}`}>
+                        {PRIORITY_STYLE[selectedTask.priority].label}
                       </span>
                     </div>
 
                     <div className="flex flex-col gap-1.5">
-                      <label className="text-[10px] font-extrabold text-slate-400 uppercase tracking-widest">Columna</label>
-                      <span className="text-center py-1.5 rounded-lg text-xs font-bold border border-slate-800 bg-slate-950 text-slate-350 capitalize">
-                        {COLUMNS.find(c => c.id === selectedTask.status)?.title}
+                      <label className="text-[10px] font-extrabold text-slate-400 uppercase tracking-widest">Creada</label>
+                      <span className="text-center py-1.5 rounded-lg text-xs font-bold border border-slate-800 bg-slate-950 text-slate-350 font-mono">
+                        {timeAgo(selectedTask.created_at)}
                       </span>
+                    </div>
+                  </div>
+
+                  {/* Riel de etapas también dentro del modal, para orientar de un vistazo */}
+                  <div className="flex flex-col gap-1.5">
+                    <label className="text-[10px] font-extrabold text-slate-400 uppercase tracking-widest">Progreso en el pipeline</label>
+                    <div className="flex items-center gap-1.5">
+                      {COLUMNS.map((c, i) => {
+                        const currentIdx = COLUMNS.findIndex(x => x.id === selectedTask.status);
+                        return (
+                          <div key={c.id} className="flex-1 flex flex-col items-center gap-1">
+                            <span className={`h-1.5 w-full rounded-full ${i <= currentIdx ? c.dot : 'bg-slate-800'}`} />
+                            <span className={`text-[8px] font-bold ${i === currentIdx ? c.text : 'text-slate-600'}`}>{c.title}</span>
+                          </div>
+                        );
+                      })}
                     </div>
                   </div>
                 </div>
               </div>
+              )}
 
-              {/* SECCIÓN: Galería de Imágenes / Adjuntos */}
+              {/* PESTAÑA: Adjuntos */}
+              {modalTab === 'adjuntos' && (
               <div className="flex flex-col gap-4">
                 <div className="flex items-center justify-between pb-2 border-b border-slate-800">
                   <h4 className="font-bold text-sm text-slate-200 flex items-center gap-2">
@@ -1351,8 +1414,10 @@ export default function Home() {
                   </div>
                 </form>
               </div>
+              )}
 
-              {/* SECCIÓN: Preguntas de Revisión Relacionales */}
+              {/* PESTAÑA: Consultas */}
+              {modalTab === 'consultas' && (
               <div className="flex flex-col gap-4">
                 <div className="flex items-center justify-between pb-2 border-b border-slate-800">
                   <h4 className="font-bold text-sm text-slate-200 flex items-center gap-2">
@@ -1364,31 +1429,24 @@ export default function Home() {
                   </span>
                 </div>
 
-                {/* Formulario para dejar dudas (solo si la tarea está en progreso o revisión) */}
-                {(selectedTask.status === 'in_progress' || selectedTask.status === 'review') ? (
-                  <form onSubmit={handleAddQuestion} className="bg-slate-950/40 border border-slate-850/50 p-4 rounded-xl flex items-center gap-3">
-                    <input 
-                      type="text" 
-                      value={questionText}
-                      onChange={(e) => setQuestionText(e.target.value)}
-                      placeholder="Escribe una duda con imágenes adjuntas arriba, o responde..." 
-                      className="flex-1 bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-200 placeholder-slate-650 focus:outline-none focus:border-indigo-500"
-                      required
-                    />
-                    <button 
-                      type="submit"
-                      className="p-2 bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg transition-all flex-shrink-0"
-                      title="Enviar pregunta/respuesta"
-                    >
-                      <Send className="w-4.5 h-4.5" />
-                    </button>
-                  </form>
-                ) : (
-                  <div className="bg-slate-950/20 border border-dashed border-slate-850 p-4.5 rounded-xl text-center text-slate-550 text-xs flex items-center justify-center gap-2 leading-relaxed">
-                    <HelpCircle className="w-4 h-4 text-indigo-400 flex-shrink-0" />
-                    <span>El canal de consultas y resolución de dudas solo se activa mientras la tarea está **En Progreso** (para plantear dudas) o **Bajo Revisión** (para resolverlas).</span>
-                  </div>
-                )}
+                {/* Formulario para dejar dudas */}
+                <form onSubmit={handleAddQuestion} className="bg-slate-950/40 border border-slate-850/50 p-4 rounded-xl flex items-center gap-3">
+                  <input 
+                    type="text" 
+                    value={questionText}
+                    onChange={(e) => setQuestionText(e.target.value)}
+                    placeholder="Escribe una duda con imágenes adjuntas arriba, o responde..." 
+                    className="flex-1 bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-200 placeholder-slate-600 focus:outline-none focus:border-indigo-500"
+                    required
+                  />
+                  <button 
+                    type="submit"
+                    className="p-2 bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg transition-all flex-shrink-0"
+                    title="Enviar pregunta/respuesta"
+                  >
+                    <Send className="w-4.5 h-4.5" />
+                  </button>
+                </form>
 
                 {/* Hilo de preguntas */}
                 <div className="flex flex-col gap-3">
@@ -1408,30 +1466,21 @@ export default function Home() {
                       >
                         <div className="flex items-start gap-3 flex-1">
                           
-                          {/* Checkbox resolver (puede alternarlo el asignado o revisores, solo en progreso o revisión) */}
+                          {/* Checkbox resolver (puede alternarlo el asignado o revisores) */}
                           <button
-                            onClick={() => (selectedTask.status === 'in_progress' || selectedTask.status === 'review') && handleToggleQuestionResolve(q)}
-                            disabled={selectedTask.status !== 'in_progress' && selectedTask.status !== 'review'}
+                            onClick={() => handleToggleQuestionResolve(q)}
                             className={`mt-0.5 flex-shrink-0 w-5 h-5 rounded-full border flex items-center justify-center transition-all ${
                               q.resolved
                                 ? 'bg-emerald-500 border-emerald-500 text-white'
-                                : (selectedTask.status === 'in_progress' || selectedTask.status === 'review')
-                                ? 'border-slate-700 hover:border-amber-400 text-transparent hover:text-amber-400/45 bg-slate-950 cursor-pointer'
-                                : 'border-slate-800 text-transparent bg-slate-950 cursor-not-allowed'
+                                : 'border-slate-700 hover:border-amber-400 text-transparent hover:text-amber-400/40 bg-slate-950'
                             }`}
-                            title={
-                              (selectedTask.status !== 'in_progress' && selectedTask.status !== 'review')
-                                ? "Las consultas están bloqueadas fuera de progreso o revisión" 
-                                : q.resolved 
-                                ? "Marcar como pendiente" 
-                                : "Marcar como resuelta"
-                            }
+                            title={q.resolved ? "Marcar como pendiente" : "Marcar como resuelta"}
                           >
                             <Check className="w-3.5 h-3.5 stroke-[3]" />
                           </button>
 
                           <div className="flex flex-col gap-1.5 flex-1 text-left">
-                            <p className={`text-xs leading-relaxed ${q.resolved ? 'line-through text-slate-550 text-slate-500' : 'text-slate-250 font-medium'}`}>
+                            <p className={`text-xs leading-relaxed ${q.resolved ? 'line-through text-slate-500' : 'text-slate-250 font-medium'}`}>
                               {q.text}
                             </p>
                             
@@ -1455,41 +1504,6 @@ export default function Home() {
                                 })}
                               </span>
                             </div>
-
-                            {/* Respuesta del Revisor si existe */}
-                            {q.response_text && (
-                              <div className="mt-2.5 ml-2 p-3 rounded-lg bg-emerald-500/5 border border-emerald-500/10 text-slate-350 text-xs flex flex-col gap-1.5">
-                                <span className="font-semibold text-[10px] text-emerald-400 uppercase tracking-wider flex items-center gap-1">
-                                  <CheckCircle2 className="w-3.5 h-3.5" /> Respuesta de Revisión:
-                                </span>
-                                <p className="leading-relaxed text-slate-300">{q.response_text}</p>
-                                <div className="flex items-center gap-1 text-[9px] text-slate-500">
-                                  <span className="font-bold text-emerald-400">{q.responder_profile ? q.responder_profile.name : 'Revisor'}</span>
-                                  <span>({q.responder_profile ? q.responder_profile.role : 'revisor'})</span>
-                                </div>
-                              </div>
-                            )}
-
-                            {/* Formulario de Respuesta (solo para revisores/admins en fase de review y si no está respondida) */}
-                            {!q.response_text && selectedTask.status === 'review' && (currentUserProfile?.role === 'revisor' || currentUserProfile?.role === 'admin') && (
-                              <form onSubmit={(e) => handleAnswerQuestion(q.id, e)} className="mt-3 flex items-center gap-2">
-                                <input
-                                  type="text"
-                                  value={answerTexts[q.id] || ''}
-                                  onChange={(e) => setAnswerTexts(prev => ({ ...prev, [q.id]: e.target.value }))}
-                                  placeholder="Escribe la respuesta del revisor..."
-                                  className="flex-1 bg-slate-950 border border-slate-800 rounded-lg px-2.5 py-1.5 text-xs text-slate-200 placeholder-slate-650 focus:outline-none focus:border-indigo-500"
-                                  required
-                                />
-                                <button
-                                  type="submit"
-                                  className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg text-xs font-bold transition-all flex items-center gap-1"
-                                >
-                                  <Send className="w-3 h-3" />
-                                  Responder
-                                </button>
-                              </form>
-                            )}
                           </div>
                         </div>
                       </div>
@@ -1497,6 +1511,84 @@ export default function Home() {
                   )}
                 </div>
               </div>
+              )}
+
+              {/* PESTAÑA: Actividad — historial de cambios y avances del ticket */}
+              {modalTab === 'actividad' && (() => {
+                type Event = { date: string; label: string; detail?: string; icon: React.ComponentType<{ className?: string }>; color: string };
+                const events: Event[] = [];
+
+                events.push({
+                  date: selectedTask.created_at,
+                  label: 'Ticket creado',
+                  detail: selectedTask.creator_profile ? `por ${selectedTask.creator_profile.name}` : 'en Por Hacer',
+                  icon: Inbox,
+                  color: 'text-slate-400 bg-slate-800',
+                });
+
+                (selectedTask.attachments || []).forEach((att: Attachment) => {
+                  events.push({
+                    date: att.created_at,
+                    label: `Adjunto añadido: ${att.name}`,
+                    icon: Paperclip,
+                    color: 'text-indigo-400 bg-indigo-500/15',
+                  });
+                });
+
+                (selectedTask.questions || []).forEach((q: Question) => {
+                  events.push({
+                    date: q.created_at,
+                    label: q.resolved ? 'Consulta resuelta' : 'Nueva consulta abierta',
+                    detail: `"${q.text.length > 60 ? q.text.slice(0, 60) + '…' : q.text}" — ${q.author_profile?.name || 'usuario'}`,
+                    icon: q.resolved ? CheckCircle2 : HelpCircle,
+                    color: q.resolved ? 'text-emerald-400 bg-emerald-500/15' : 'text-amber-400 bg-amber-500/15',
+                  });
+                });
+
+                events.sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
+
+                const currentCol = COLUMNS.find(c => c.id === selectedTask.status)!;
+
+                return (
+                  <div className="flex flex-col gap-4">
+                    <div className="flex items-center justify-between pb-2 border-b border-slate-800">
+                      <h4 className="font-bold text-sm text-slate-200 flex items-center gap-2">
+                        <History className="w-4.5 h-4.5 text-indigo-400" />
+                        Historial de Avances
+                      </h4>
+                      <span className={`text-[10px] font-black uppercase tracking-wider px-2 py-0.5 rounded-full flex items-center gap-1 ${currentCol.badge}`}>
+                        <currentCol.icon className="w-3 h-3" /> Estado actual: {currentCol.title}
+                      </span>
+                    </div>
+
+                    <p className="text-[11px] text-slate-500 leading-relaxed -mt-1">
+                      Línea de tiempo derivada de la actividad registrada del ticket (creación, adjuntos y consultas). 
+                      Para un historial completo de cada cambio de columna (quién movió qué y cuándo), se puede sumar 
+                      una tabla <code className="font-mono text-slate-400">activity_log</code> en el backend.
+                    </p>
+
+                    <div className="flex flex-col">
+                      {events.map((ev, i) => (
+                        <div key={i} className="flex gap-3">
+                          <div className="flex flex-col items-center">
+                            <div className={`w-7 h-7 rounded-full flex items-center justify-center flex-shrink-0 ${ev.color}`}>
+                              <ev.icon className="w-3.5 h-3.5" />
+                            </div>
+                            {i < events.length - 1 && <div className="w-px flex-1 bg-slate-800 my-1" />}
+                          </div>
+                          <div className="pb-5 flex-1">
+                            <div className="flex items-center gap-2 flex-wrap">
+                              <span className="text-xs font-bold text-slate-200">{ev.label}</span>
+                              <span className="text-[9px] font-mono text-slate-600">{timeAgo(ev.date)}</span>
+                            </div>
+                            {ev.detail && <p className="text-[11px] text-slate-500 mt-0.5">{ev.detail}</p>}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                );
+              })()}
             </div>
 
             {/* Footer con Acciones de Flujo */}
