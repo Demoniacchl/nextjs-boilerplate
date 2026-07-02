@@ -56,6 +56,9 @@ interface Question {
   resolved: boolean;
   created_at: string;
   author_profile?: Profile;
+  response_text?: string;
+  responder_id?: string;
+  responder_profile?: Profile;
 }
 
 interface Task {
@@ -175,6 +178,7 @@ export default function Home() {
   
   // Form Pregunta
   const [questionText, setQuestionText] = useState('');
+  const [answerTexts, setAnswerTexts] = useState<Record<string, string>>({});
 
   // Toast
   const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null);
@@ -538,6 +542,45 @@ export default function Home() {
       showToast('Pregunta de revisión enviada');
     } catch (err) {
       showToast('Error al enviar pregunta', 'error');
+    }
+  };
+
+  // 5.b Responder Pregunta (solo para revisores o autorizados)
+  const handleAnswerQuestion = async (qid: string, e: React.FormEvent) => {
+    e.preventDefault();
+    const ansText = answerTexts[qid];
+    if (!ansText || !ansText.trim() || !session || !selectedTask) return;
+
+    try {
+      const res = await fetch(`/api/questions/${qid}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          response_text: ansText,
+          responder_id: session.user.id,
+          resolved: true // Al responder una duda, se marca como resuelta
+        })
+      });
+
+      if (!res.ok) throw new Error();
+      const updatedQ = await res.json();
+
+      // Encontrar perfil del que responde
+      const currentProfile = profiles.find((p: Profile) => p.id === session.user.id) || currentUserProfile;
+      updatedQ.responder_profile = currentProfile;
+
+      // Actualizar local
+      const updatedQuestions = (selectedTask.questions || []).map((q: Question) => q.id === qid ? { ...q, ...updatedQ } : q);
+      const updatedTask = { ...selectedTask, questions: updatedQuestions };
+
+      setTasks((prev: Task[]) => prev.map((t: Task) => t.id === selectedTask.id ? updatedTask : t));
+      setSelectedTask(updatedTask);
+      
+      // Limpiar input de esta duda
+      setAnswerTexts(prev => ({ ...prev, [qid]: '' }));
+      showToast('Pregunta respondida y resuelta');
+    } catch (err) {
+      showToast('Error al enviar la respuesta', 'error');
     }
   };
 
@@ -1485,7 +1528,7 @@ export default function Home() {
                             </p>
                             
                             {/* Información del Autor */}
-                            <div className="flex flex-wrap items-center gap-2 text-[10px] text-slate-500 font-medium">
+                            <div className="flex flex-wrap items-center gap-2 text-[10px] text-slate-550 text-slate-500 font-medium">
                               <span className="flex items-center gap-0.5 text-indigo-400 font-semibold">
                                 <User className="w-3 h-3" />
                                 {q.author_profile ? q.author_profile.name : 'Usuario'}
@@ -1504,6 +1547,41 @@ export default function Home() {
                                 })}
                               </span>
                             </div>
+
+                            {/* Respuesta del Revisor si existe */}
+                            {q.response_text && (
+                              <div className="mt-2.5 ml-2 p-3 rounded-lg bg-emerald-500/5 border border-emerald-500/10 text-slate-350 text-xs flex flex-col gap-1.5">
+                                <span className="font-semibold text-[10px] text-emerald-400 uppercase tracking-wider flex items-center gap-1">
+                                  <CheckCircle2 className="w-3.5 h-3.5" /> Respuesta de Revisión:
+                                </span>
+                                <p className="leading-relaxed text-slate-300">{q.response_text}</p>
+                                <div className="flex items-center gap-1 text-[9px] text-slate-550 text-slate-500">
+                                  <span className="font-bold text-emerald-400">{q.responder_profile ? q.responder_profile.name : 'Revisor'}</span>
+                                  <span>({q.responder_profile ? q.responder_profile.role : 'revisor'})</span>
+                                </div>
+                              </div>
+                            )}
+
+                            {/* Formulario de Respuesta (solo para revisores/admins en fase de review y si no está respondida) */}
+                            {!q.response_text && selectedTask.status === 'review' && (currentUserProfile?.role === 'revisor' || currentUserProfile?.role === 'admin') && (
+                              <form onSubmit={(e) => handleAnswerQuestion(q.id, e)} className="mt-3 flex items-center gap-2">
+                                <input
+                                  type="text"
+                                  value={answerTexts[q.id] || ''}
+                                  onChange={(e) => setAnswerTexts(prev => ({ ...prev, [q.id]: e.target.value }))}
+                                  placeholder="Escribe la respuesta del revisor..."
+                                  className="flex-1 bg-slate-950 border border-slate-800 rounded-lg px-2.5 py-1.5 text-xs text-slate-200 placeholder-slate-600 focus:outline-none focus:border-indigo-500"
+                                  required
+                                />
+                                <button
+                                  type="submit"
+                                  className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg text-xs font-bold transition-all flex items-center gap-1"
+                                >
+                                  <Send className="w-3 h-3" />
+                                  Responder
+                                </button>
+                              </form>
+                            )}
                           </div>
                         </div>
                       </div>
