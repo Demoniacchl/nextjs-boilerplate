@@ -1,16 +1,23 @@
 import { NextResponse } from 'next/server';
 import { supabase } from '@/lib/supabase';
 
-// GET: Obtener todas las tareas
+// GET: Obtener todas las tareas con JOINs relacionales
 export async function GET() {
   try {
+    // Consultamos la tabla tasks incluyendo perfiles de usuario, adjuntos y preguntas con perfiles
     const { data, error } = await supabase
       .from('tasks')
-      .select('*')
+      .select(`
+        *,
+        assigned_profile:profiles!assigned_to(*),
+        creator_profile:profiles!created_by(*),
+        attachments:task_attachments(*),
+        questions:task_questions(*, author_profile:profiles!author_id(*))
+      `)
       .order('created_at', { ascending: true });
 
     if (error) {
-      console.error('Error al obtener tareas de Supabase:', error);
+      console.error('Error al obtener tareas relacionales de Supabase:', error);
       return NextResponse.json({ error: error.message }, { status: 500 });
     }
 
@@ -21,11 +28,11 @@ export async function GET() {
   }
 }
 
-// POST: Crear una nueva tarea
+// POST: Crear una nueva tarea relacional
 export async function POST(request: Request) {
   try {
     const body = await request.json();
-    const { title, description, status, priority } = body;
+    const { title, description, status, priority, created_by, assigned_to } = body;
 
     if (!title) {
       return NextResponse.json({ error: 'El título es obligatorio' }, { status: 400 });
@@ -39,13 +46,20 @@ export async function POST(request: Request) {
           description: description || '',
           status: status || 'todo',
           priority: priority || 'medium',
-          questions: [], // Por defecto inicia sin preguntas de revisión
+          created_by: created_by || null,
+          assigned_to: assigned_to || null,
         },
       ])
-      .select();
+      .select(`
+        *,
+        assigned_profile:profiles!assigned_to(*),
+        creator_profile:profiles!created_by(*),
+        attachments:task_attachments(*),
+        questions:task_questions(*, author_profile:profiles!author_id(*))
+      `);
 
     if (error) {
-      console.error('Error al insertar tarea en Supabase:', error);
+      console.error('Error al insertar tarea relacional en Supabase:', error);
       return NextResponse.json({ error: error.message }, { status: 500 });
     }
 
