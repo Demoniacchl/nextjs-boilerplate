@@ -249,6 +249,16 @@ export default function Home() {
 
   // --- ACCIONES KANBAN ---
   
+  // Abrir formulario para crear tarea
+  const handleOpenCreate = (columnId: 'todo' | 'in_progress' | 'review' | 'done') => {
+    setCreateColumn(columnId);
+    setNewTitle('');
+    setNewDesc('');
+    setNewPriority('medium');
+    setNewAssignedTo('');
+    setIsCreateOpen(true);
+  };
+
   // 1. Crear Tarea
   const handleCreateTask = async (e: React.FormEvent) => {
     e.preventDefault();
