@@ -50,6 +50,9 @@ interface Question {
   resolved: boolean;
   created_at: string;
   author_profile?: Profile;
+  response_text?: string;
+  responder_id?: string;
+  responder_profile?: Profile;
 }
 
 interface Task {
@@ -68,10 +71,10 @@ interface Task {
 }
 
 const COLUMNS = [
-  { id: 'todo', title: 'Por Hacer', color: 'bg-zinc-100 dark:bg-zinc-900 border-zinc-200 dark:border-zinc-800' },
-  { id: 'in_progress', title: 'En Progreso', color: 'bg-blue-50/50 dark:bg-blue-950/20 border-blue-100 dark:border-blue-900/50' },
-  { id: 'review', title: 'Bajo Revisión', color: 'bg-amber-50/50 dark:bg-amber-950/20 border-amber-100 dark:border-amber-900/50' },
-  { id: 'done', title: 'Completado', color: 'bg-emerald-50/50 dark:bg-emerald-950/20 border-emerald-100 dark:border-emerald-900/50' }
+  { id: 'todo', title: 'Por Hacer', color: 'bg-slate-900/30 border-slate-800/80' },
+  { id: 'in_progress', title: 'En Progreso', color: 'bg-blue-950/15 border-blue-900/30' },
+  { id: 'review', title: 'Bajo Revisión', color: 'bg-amber-950/15 border-amber-900/30' },
+  { id: 'done', title: 'Completado', color: 'bg-emerald-950/15 border-emerald-900/30' }
 ] as const;
 
 export default function Home() {
@@ -104,12 +107,14 @@ export default function Home() {
   const [newPriority, setNewPriority] = useState<'low' | 'medium' | 'high'>('medium');
   const [newAssignedTo, setNewAssignedTo] = useState('');
 
-  // Form Adjunto
+  // Form Adjunto (ImgBB Upload)
   const [attachmentName, setAttachmentName] = useState('');
-  const [attachmentUrl, setAttachmentUrl] = useState('');
+  const [selectedFile, setSelectedFile] = useState<File | null>(null);
+  const [uploadingFile, setUploadingFile] = useState(false);
   
   // Form Pregunta
   const [questionText, setQuestionText] = useState('');
+  const [answerTexts, setAnswerTexts] = useState<Record<string, string>>({});
 
   // Toast
   const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null);
@@ -314,7 +319,7 @@ export default function Home() {
   const handleOpenDetail = (task: Task) => {
     setSelectedTask(task);
     setAttachmentName('');
-    setAttachmentUrl('');
+    setSelectedFile(null);
     setQuestionText('');
   };
 
@@ -404,36 +409,65 @@ export default function Home() {
     }
   };
 
-  // 4. Agregar Adjunto (Imagen)
+  // 4. Agregar Adjunto (Imagen con ImgBB)
   const handleAddAttachment = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!selectedTask || !attachmentUrl.trim() || !attachmentName.trim()) return;
+    if (!selectedTask || !selectedFile || !attachmentName.trim()) return;
 
+    setUploadingFile(true);
     try {
+      const apiKey = process.env.NEXT_PUBLIC_IMGBB_API_KEY || '4a53239a58b8d447d25164bc1495c2e1';
+      
+      const formData = new FormData();
+      formData.append('image', selectedFile);
+
+      // Subir imagen a ImgBB
+      const imgbbRes = await fetch(`https://api.imgbb.com/1/upload?key=${apiKey}`, {
+        method: 'POST',
+        body: formData
+      });
+
+      if (!imgbbRes.ok) {
+        const errJson = await imgbbRes.json().catch(() => ({}));
+        throw new Error(errJson?.error?.message || 'Error al subir imagen a ImgBB (Verifica tu API Key)');
+      }
+      const imgbbData = await imgbbRes.json();
+      const imageUrl = imgbbData?.data?.url;
+
+      if (!imageUrl) throw new Error('No se pudo obtener el enlace de la imagen subida');
+
+      // Guardar el enlace de la imagen en Supabase
       const res = await fetch(`/api/tasks/${selectedTask.id}/attachments`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           name: attachmentName,
-          url: attachmentUrl,
+          url: imageUrl,
           uploaded_by: session.user.id
         })
       });
 
-      if (!res.ok) throw new Error();
+      if (!res.ok) throw new Error('Error al registrar el adjunto en la base de datos');
       const newAttach = await res.json();
 
-      // Actualizar local
       const updatedAttachments = [...(selectedTask.attachments || []), newAttach];
       const updatedTask = { ...selectedTask, attachments: updatedAttachments };
 
       setTasks((prev: Task[]) => prev.map((t: Task) => t.id === selectedTask.id ? updatedTask : t));
       setSelectedTask(updatedTask);
       setAttachmentName('');
-      setAttachmentUrl('');
-      showToast('Imagen adjuntada');
-    } catch (err) {
-      showToast('Error al agregar adjunto', 'error');
+      setSelectedFile(null);
+
+      // Limpiar input de archivo
+      const fileInput = document.getElementById('task-file-input') as HTMLInputElement;
+      if (fileInput) fileInput.value = '';
+
+      showToast('Imagen subida y adjuntada correctamente');
+    } catch (err: any) {
+      console.error(err);
+      showToast(err.message || 'Error al subir adjunto', 'error');
+    } finally {
+      setUploadingFile(false);
     }
   };
 
@@ -467,6 +501,45 @@ export default function Home() {
       showToast('Pregunta de revisión enviada');
     } catch (err) {
       showToast('Error al enviar pregunta', 'error');
+    }
+  };
+
+  // 5.b Responder Pregunta (solo para revisores o autorizados)
+  const handleAnswerQuestion = async (qid: string, e: React.FormEvent) => {
+    e.preventDefault();
+    const ansText = answerTexts[qid];
+    if (!ansText || !ansText.trim() || !session || !selectedTask) return;
+
+    try {
+      const res = await fetch(`/api/questions/${qid}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          response_text: ansText,
+          responder_id: session.user.id,
+          resolved: true // Al responder una duda, se marca como resuelta
+        })
+      });
+
+      if (!res.ok) throw new Error();
+      const updatedQ = await res.json();
+
+      // Encontrar perfil del que responde
+      const currentProfile = profiles.find((p: Profile) => p.id === session.user.id) || currentUserProfile;
+      updatedQ.responder_profile = currentProfile;
+
+      // Actualizar local
+      const updatedQuestions = (selectedTask.questions || []).map((q: Question) => q.id === qid ? { ...q, ...updatedQ } : q);
+      const updatedTask = { ...selectedTask, questions: updatedQuestions };
+
+      setTasks((prev: Task[]) => prev.map((t: Task) => t.id === selectedTask.id ? updatedTask : t));
+      setSelectedTask(updatedTask);
+      
+      // Limpiar input de esta duda
+      setAnswerTexts(prev => ({ ...prev, [qid]: '' }));
+      showToast('Pregunta respondida y resuelta');
+    } catch (err) {
+      showToast('Error al enviar la respuesta', 'error');
     }
   };
 
@@ -851,7 +924,7 @@ export default function Home() {
                             draggable
                             onDragStart={(e) => handleDragStart(e, task.id)}
                             onClick={() => handleOpenDetail(task)}
-                            className="bg-slate-900/90 border border-slate-850/80 rounded-xl cursor-grab active:cursor-grabbing hover:border-slate-700 transition-all duration-200 hover:shadow-lg hover:shadow-black/20 group relative overflow-hidden flex flex-col"
+                            className="bg-[#15233c]/90 border border-[#233857] rounded-xl cursor-grab active:cursor-grabbing hover:border-indigo-500/50 hover:-translate-y-0.5 transition-all duration-300 hover:shadow-xl hover:shadow-indigo-500/5 group relative overflow-hidden flex flex-col"
                           >
                             {/* Portada de Imagen (Trello style) */}
                             {coverAttachment && (
@@ -1231,32 +1304,49 @@ export default function Home() {
 
                 {/* Formulario para adjuntar */}
                 <form onSubmit={handleAddAttachment} className="bg-slate-950/40 border border-slate-850/50 p-4 rounded-xl flex flex-col gap-3">
-                  <p className="text-xs font-bold text-slate-400 uppercase tracking-wider">Añadir enlace de imagen / captura</p>
+                  <p className="text-xs font-bold text-slate-400 uppercase tracking-wider">Subir Captura / Imagen (vía ImgBB)</p>
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                     <input 
                       type="text"
                       value={attachmentName}
                       onChange={(e) => setAttachmentName(e.target.value)}
-                      placeholder="Nombre del adjunto (Ej: Captura de pantalla)"
+                      placeholder="Nombre del archivo (Ej: Captura de pantalla)"
                       className="bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-200 placeholder-slate-600 focus:outline-none focus:border-indigo-500"
                       required
                     />
                     <input 
-                      type="url"
-                      value={attachmentUrl}
-                      onChange={(e) => setAttachmentUrl(e.target.value)}
-                      placeholder="URL pública de la imagen (https://...)"
-                      className="bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-200 placeholder-slate-600 focus:outline-none focus:border-indigo-500"
+                      id="task-file-input"
+                      type="file"
+                      accept="image/*"
+                      onChange={(e) => {
+                        const file = e.target.files?.[0] || null;
+                        setSelectedFile(file);
+                        if (file && !attachmentName) {
+                          // Auto-completar el nombre del archivo sin la extensión
+                          setAttachmentName(file.name.replace(/\.[^/.]+$/, ""));
+                        }
+                      }}
+                      className="bg-slate-950 border border-slate-800 rounded-lg px-3 py-1.5 text-xs text-slate-450 file:mr-4 file:py-1 file:px-2.5 file:rounded-md file:border-0 file:text-[10px] file:font-semibold file:bg-indigo-500/20 file:text-indigo-400 hover:file:bg-indigo-500/30 file:cursor-pointer"
                       required
                     />
                   </div>
                   <div className="flex justify-end">
                     <button 
                       type="submit"
-                      className="px-4 py-1.5 bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg text-xs font-bold transition-all flex items-center gap-1.5"
+                      disabled={uploadingFile}
+                      className="px-4 py-1.5 bg-indigo-600 hover:bg-indigo-500 disabled:bg-slate-800 disabled:text-slate-550 text-white rounded-lg text-xs font-bold transition-all flex items-center gap-1.5"
                     >
-                      <Plus className="w-3.5 h-3.5" />
-                      Adjuntar Imagen
+                      {uploadingFile ? (
+                        <>
+                          <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                          Subiendo...
+                        </>
+                      ) : (
+                        <>
+                          <Plus className="w-3.5 h-3.5" />
+                          Subir y Adjuntar
+                        </>
+                      )}
                     </button>
                   </div>
                 </form>
@@ -1274,24 +1364,31 @@ export default function Home() {
                   </span>
                 </div>
 
-                {/* Formulario para dejar dudas */}
-                <form onSubmit={handleAddQuestion} className="bg-slate-950/40 border border-slate-850/50 p-4 rounded-xl flex items-center gap-3">
-                  <input 
-                    type="text" 
-                    value={questionText}
-                    onChange={(e) => setQuestionText(e.target.value)}
-                    placeholder="Escribe una duda con imágenes adjuntas arriba, o responde..." 
-                    className="flex-1 bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-200 placeholder-slate-600 focus:outline-none focus:border-indigo-500"
-                    required
-                  />
-                  <button 
-                    type="submit"
-                    className="p-2 bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg transition-all flex-shrink-0"
-                    title="Enviar pregunta/respuesta"
-                  >
-                    <Send className="w-4.5 h-4.5" />
-                  </button>
-                </form>
+                {/* Formulario para dejar dudas (solo si la tarea está en progreso o revisión) */}
+                {(selectedTask.status === 'in_progress' || selectedTask.status === 'review') ? (
+                  <form onSubmit={handleAddQuestion} className="bg-slate-950/40 border border-slate-850/50 p-4 rounded-xl flex items-center gap-3">
+                    <input 
+                      type="text" 
+                      value={questionText}
+                      onChange={(e) => setQuestionText(e.target.value)}
+                      placeholder="Escribe una duda con imágenes adjuntas arriba, o responde..." 
+                      className="flex-1 bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-200 placeholder-slate-650 focus:outline-none focus:border-indigo-500"
+                      required
+                    />
+                    <button 
+                      type="submit"
+                      className="p-2 bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg transition-all flex-shrink-0"
+                      title="Enviar pregunta/respuesta"
+                    >
+                      <Send className="w-4.5 h-4.5" />
+                    </button>
+                  </form>
+                ) : (
+                  <div className="bg-slate-950/20 border border-dashed border-slate-850 p-4.5 rounded-xl text-center text-slate-550 text-xs flex items-center justify-center gap-2 leading-relaxed">
+                    <HelpCircle className="w-4 h-4 text-indigo-400 flex-shrink-0" />
+                    <span>El canal de consultas y resolución de dudas solo se activa mientras la tarea está **En Progreso** (para plantear dudas) o **Bajo Revisión** (para resolverlas).</span>
+                  </div>
+                )}
 
                 {/* Hilo de preguntas */}
                 <div className="flex flex-col gap-3">
@@ -1311,21 +1408,30 @@ export default function Home() {
                       >
                         <div className="flex items-start gap-3 flex-1">
                           
-                          {/* Checkbox resolver (puede alternarlo el asignado o revisores) */}
+                          {/* Checkbox resolver (puede alternarlo el asignado o revisores, solo en progreso o revisión) */}
                           <button
-                            onClick={() => handleToggleQuestionResolve(q)}
+                            onClick={() => (selectedTask.status === 'in_progress' || selectedTask.status === 'review') && handleToggleQuestionResolve(q)}
+                            disabled={selectedTask.status !== 'in_progress' && selectedTask.status !== 'review'}
                             className={`mt-0.5 flex-shrink-0 w-5 h-5 rounded-full border flex items-center justify-center transition-all ${
                               q.resolved
                                 ? 'bg-emerald-500 border-emerald-500 text-white'
-                                : 'border-slate-700 hover:border-amber-400 text-transparent hover:text-amber-400/40 bg-slate-950'
+                                : (selectedTask.status === 'in_progress' || selectedTask.status === 'review')
+                                ? 'border-slate-700 hover:border-amber-400 text-transparent hover:text-amber-400/45 bg-slate-950 cursor-pointer'
+                                : 'border-slate-800 text-transparent bg-slate-950 cursor-not-allowed'
                             }`}
-                            title={q.resolved ? "Marcar como pendiente" : "Marcar como resuelta"}
+                            title={
+                              (selectedTask.status !== 'in_progress' && selectedTask.status !== 'review')
+                                ? "Las consultas están bloqueadas fuera de progreso o revisión" 
+                                : q.resolved 
+                                ? "Marcar como pendiente" 
+                                : "Marcar como resuelta"
+                            }
                           >
                             <Check className="w-3.5 h-3.5 stroke-[3]" />
                           </button>
 
                           <div className="flex flex-col gap-1.5 flex-1 text-left">
-                            <p className={`text-xs leading-relaxed ${q.resolved ? 'line-through text-slate-500' : 'text-slate-250 font-medium'}`}>
+                            <p className={`text-xs leading-relaxed ${q.resolved ? 'line-through text-slate-550 text-slate-500' : 'text-slate-250 font-medium'}`}>
                               {q.text}
                             </p>
                             
@@ -1349,6 +1455,41 @@ export default function Home() {
                                 })}
                               </span>
                             </div>
+
+                            {/* Respuesta del Revisor si existe */}
+                            {q.response_text && (
+                              <div className="mt-2.5 ml-2 p-3 rounded-lg bg-emerald-500/5 border border-emerald-500/10 text-slate-350 text-xs flex flex-col gap-1.5">
+                                <span className="font-semibold text-[10px] text-emerald-400 uppercase tracking-wider flex items-center gap-1">
+                                  <CheckCircle2 className="w-3.5 h-3.5" /> Respuesta de Revisión:
+                                </span>
+                                <p className="leading-relaxed text-slate-300">{q.response_text}</p>
+                                <div className="flex items-center gap-1 text-[9px] text-slate-500">
+                                  <span className="font-bold text-emerald-400">{q.responder_profile ? q.responder_profile.name : 'Revisor'}</span>
+                                  <span>({q.responder_profile ? q.responder_profile.role : 'revisor'})</span>
+                                </div>
+                              </div>
+                            )}
+
+                            {/* Formulario de Respuesta (solo para revisores/admins en fase de review y si no está respondida) */}
+                            {!q.response_text && selectedTask.status === 'review' && (currentUserProfile?.role === 'revisor' || currentUserProfile?.role === 'admin') && (
+                              <form onSubmit={(e) => handleAnswerQuestion(q.id, e)} className="mt-3 flex items-center gap-2">
+                                <input
+                                  type="text"
+                                  value={answerTexts[q.id] || ''}
+                                  onChange={(e) => setAnswerTexts(prev => ({ ...prev, [q.id]: e.target.value }))}
+                                  placeholder="Escribe la respuesta del revisor..."
+                                  className="flex-1 bg-slate-950 border border-slate-800 rounded-lg px-2.5 py-1.5 text-xs text-slate-200 placeholder-slate-650 focus:outline-none focus:border-indigo-500"
+                                  required
+                                />
+                                <button
+                                  type="submit"
+                                  className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg text-xs font-bold transition-all flex items-center gap-1"
+                                >
+                                  <Send className="w-3 h-3" />
+                                  Responder
+                                </button>
+                              </form>
+                            )}
                           </div>
                         </div>
                       </div>

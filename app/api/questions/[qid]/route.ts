@@ -9,11 +9,13 @@ export async function PATCH(
   try {
     const { qid } = (await context.params) as { qid: string };
     const body = await request.json();
-    const { resolved, text } = body;
+    const { resolved, text, response_text, responder_id } = body;
 
     const updateData: Record<string, any> = {};
     if (resolved !== undefined) updateData.resolved = resolved;
     if (text !== undefined) updateData.text = text;
+    if (response_text !== undefined) updateData.response_text = response_text;
+    if (responder_id !== undefined) updateData.responder_id = responder_id;
 
     if (Object.keys(updateData).length === 0) {
       return NextResponse.json({ error: 'No se enviaron datos para actualizar' }, { status: 400 });

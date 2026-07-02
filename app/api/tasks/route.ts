@@ -12,7 +12,7 @@ export async function GET() {
         assigned_profile:profiles!assigned_to(*),
         creator_profile:profiles!created_by(*),
         attachments:task_attachments(*),
-        questions:task_questions(*, author_profile:profiles!author_id(*))
+        questions:task_questions(*, author_profile:profiles!author_id(*), responder_profile:profiles!responder_id(*))
       `)
       .order('created_at', { ascending: true });
 
@@ -55,7 +55,7 @@ export async function POST(request: Request) {
         assigned_profile:profiles!assigned_to(*),
         creator_profile:profiles!created_by(*),
         attachments:task_attachments(*),
-        questions:task_questions(*, author_profile:profiles!author_id(*))
+        questions:task_questions(*, author_profile:profiles!author_id(*), responder_profile:profiles!responder_id(*))
       `);
 
     if (error) {

@@ -32,7 +32,6 @@ export async function POST(
       return NextResponse.json({ error: error.message }, { status: 500 });
     }
 
-    // Retornamos el registro creado
     return NextResponse.json(data?.[0] || null, { status: 201 });
   } catch (err: any) {
     console.error('Excepción en POST /api/tasks/[id]/questions:', err);
