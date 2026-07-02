@@ -1,16 +1,13 @@
 import { NextResponse } from 'next/server';
 import { supabase } from '@/lib/supabase';
 
-interface RouteParams {
-  params: Promise<{
-    id: string;
-  }>;
-}
-
 // PATCH: Actualizar una tarea (título, descripción, columna, prioridad o preguntas de revisión)
-export async function PATCH(request: Request, { params }: RouteParams) {
+export async function PATCH(
+  request: Request,
+  context: { params: Promise<any> }
+) {
   try {
-    const { id } = await params;
+    const { id } = (await context.params) as { id: string };
     const body = await request.json();
     
     // Obtenemos los campos posibles a actualizar
@@ -50,9 +47,12 @@ export async function PATCH(request: Request, { params }: RouteParams) {
 }
 
 // DELETE: Eliminar una tarea
-export async function DELETE(request: Request, { params }: RouteParams) {
+export async function DELETE(
+  request: Request,
+  context: { params: Promise<any> }
+) {
   try {
-    const { id } = await params;
+    const { id } = (await context.params) as { id: string };
 
     const { error } = await supabase
       .from('tasks')
